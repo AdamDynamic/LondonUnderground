@@ -17,6 +17,7 @@ DESCRIPTION:        Used in the DIJKSTRAS module to calculate shortest routes
 #######################################################################################################
 '''
 
+
 # Priority dictionary using binary heaps
 # David Eppstein, UC Irvine, 8 Mar 2002
 
