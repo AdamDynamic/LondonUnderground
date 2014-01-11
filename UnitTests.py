@@ -57,9 +57,11 @@ assert RouteOptimisation_Test == Optimisation_Route_ExpectedResult
 ''' Route Calculation '''
 
 Weighting_Dict_Test = RouteCalculation.CreateWeightedDict({'Station1': 5.0, 'Station2': 6.0, 'Station3': 7.0})
-Weighting_Dict_ExpectedResult = {'Station1': 100000.0, 'Station2': 79.04903231199668, 'Station3': 0.06248749509463097}
+Weighting_Dict_ExpectedResult = {'Station1': 100000.0, 'Station2': 79.04903231199668, 'Station3': 0.06248749509463097} ### Relies on the exponential factor being 50
 
-assert Weighting_Dict_Test == Weighting_Dict_ExpectedResult
+for i in Weighting_Dict_Test.keys():
+    if abs((Weighting_Dict_Test[i]) - (Weighting_Dict_ExpectedResult[i]))>0.01:
+        raise ValueError("Weighted_Dict result not equal to expected result")
 
 Route_Length_Test = RouteCalculation.GetLengthOfRoute(ROUTE_TEST)
 Route_Length_ExpectedResult = 9131.756

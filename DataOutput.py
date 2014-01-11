@@ -3,7 +3,7 @@
 
 AUTHOR:             Adam Dynamic
 CONTACT:            helloadamdynamic@gmail.com / www.adamdynamic.com
-LAST REVISION:      28 December 2013
+LAST REVISION:      11 January 2014
 
 PROJECT:            Tube Challenge Route Creation
 DESCRIPTION:        Outputs the routes created in readable formats
@@ -11,62 +11,144 @@ DESCRIPTION:        Outputs the routes created in readable formats
 #######################################################################################################
 '''
 
-import Reference as r
-from RouteCalculation import StationsOnTheSameLine
+import MySQLdb
+import time
+import datetime
+import logging
 
-TestRoute =  [' HEATHROW 5', 'HEATHROW 123', 'HATTON CROSS', 'HEATHROW TERMINAL FOUR', 'HEATHROW TERMINAL FOUR', 'HEATHROW 123', 'HATTON CROSS', 'HOUNSLOW WEST', 'HOUNSLOW CENTRAL', 
-                      'HOUNSLOW EAST', 'OSTERLEY', 'BOSTON MANOR', 'NORTHFIELDS', 'SOUTH EALING', 'ACTON TOWN', 'CHISWICK PARK', 'TURNHAM GREEN', 'GUNNERSBURY', 'KEW GARDENS', 
-                      
-                      'RICHMOND', 'RICHMOND', 'KEW GARDENS', 'GUNNERSBURY', 'TURNHAM GREEN', 'STAMFORD BROOK', 'RAVENSCOURT PARK', 'HAMMERSMITH', 'GOLDHAWK ROAD', 'SHEPHERDS BUSH MARKET',
-                      'WOOD LANE', 'LATIMER ROAD', 'LADBROKE GROVE', 'WESTBOURNE PARK', 'ROYAL OAK', 'PADDINGTON', 'BAYSWATER', 'NOTTING HILL GATE', 'HIGH STREET KENSINGTON', 
-                       
-                      'GLOUCESTER ROAD', 'EARLS COURT', 'WEST BROMPTON', 'FULHAM BROADWAY', 'PARSONS GREEN', 'PUTNEY BRIDGE', 'EAST PUTNEY', 'SOUTHFIELDS', 'WIMBLEDON PARK', 'WIMBLEDON', 
-                      'SOUTH WIMBLEDON', 'COLLIERS WOOD', 'TOOTING BROADWAY', 'TOOTING BEC', 'BALHAM', 'CLAPHAM SOUTH', 'CLAPHAM COMMON', 'CLAPHAM NORTH', 'STOCKWELL', 'OVAL', 'KENNINGTON',
+import Reference as r
+#from RouteCalculation import StationsOnTheSameLine
+
+def InsertHistogramIntoDatabase(TimesHistogram):
+    ''' Uploads the TimesHistogram into the database '''
+    
+    FN_NAME = "InsertHistogramIntoDatabase"
+    
+    try: 
+        if TimesHistogram:
+            ListOfKeys = [i for i in TimesHistogram.keys()]
+            
+            # Establish the connection to the database
+            db = MySQLdb.connect(
+                                 host=r.DB_HOST,
+                                 user=r.DB_USER,
+                                 passwd=r.DB_PASSWORD,
+                                 db=r.DB_NAME
+                                 )
+            cur = db.cursor()
+            
+            # Create the multiple entry SQL query
+            HistogramQuery = "UPDATE " + r.DB_TABLE_SUMMARY_STATS + " SET " + r.SUMSTAT_FIELD_FREQ + " = CASE " + r.SUMSTAT_FIELD_TIMESLOT
+        
+            for i in ListOfKeys:
+                HistogramQuery = HistogramQuery + " WHEN " + str(i) + " THEN " + r.SUMSTAT_FIELD_FREQ + " + " + str(TimesHistogram[i])
+            
+            HistogramQuery = HistogramQuery + " END WHERE " + r.SUMSTAT_FIELD_TIMESLOT + " BETWEEN " + str(min(ListOfKeys)) + " AND " + str(max(ListOfKeys)) + ";"
+        
+            cur.execute (HistogramQuery)
+                            
+            db.commit()
+            
+        else:
+            logging.error('%s: No histrogram passed to function', FN_NAME)
+    
+    except Exception, e:
+        logging.error('%s: Generated error in operation', FN_NAME)
+        logging.error('%s: Query:\n%s' % (FN_NAME,HistogramQuery))
+        logging.exception('Traceback message: \n%s',e)
+        
+    else:
+        logging.debug('%s: Histrogram inserted into table without error', FN_NAME)
+        
+    finally:
+        db.close()
+
+def CreateTimeStamp():
+    '''Create a timestamp with which to mark the log entry'''
+        
+    ts = time.time()
+    TimeStamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+
+    return TimeStamp
+
+def GetDatabaseShortestRoute():
+    ''' Gets the shortest route from the database so that only routes shorter than that are stored '''
+    
+    FN_NAME = "GetDatabaseShortestRoute"
+    
+    try:
+        # Establish the connection to the database
+        db = MySQLdb.connect(
+                             host=r.DB_HOST,
+                             user=r.DB_USER,
+                             passwd=r.DB_PASSWORD,
+                             db=r.DB_NAME
+                             )
+        cur = db.cursor()
+        
+        ShortestDistanceQuery = "SELECT MIN(" + r.SHORTROUTE_DISTANCE + ") FROM " + r.DB_TABLE_SHORTEST_ROUTE + ";"
+        
+        # Retrieve the shortest current route from the database
+        cur.execute(ShortestDistanceQuery)
+        ShortestDistance = cur.fetchone()
+        
+    except Exception, e:
+        logging.error('%s: Unable to retrieve shortest route from the database', FN_NAME)
+        logging.error('%s: Query:\n%s' % (FN_NAME,ShortestDistanceQuery))
+        logging.exception('Traceback message: \n%s',e)
+        
+        ShortestDistance = (1100,) # Value chosen as the approximate lower limit of what the current process is capable of generating
+    
+    else:
+        logging.debug('%s: Shortest route returned from database without error', FN_NAME)
+        logging.debug('%s: Shortest route: %s' %(FN_NAME,ShortestDistance[0]))
+    
+    finally:
+        db.close()        
+        return ShortestDistance[0]
+    
+
+def InsertShortestRouteIntoDatabase(Route, RouteTime):
+    ''' Updates the database with a record of the shortest route '''
+    
+    FN_NAME = "InsertShortestRouteIntoDatabase"
+    
+    try:
+        # Establish the connection to the database
+        db = MySQLdb.connect(
+                             host=r.DB_HOST,
+                             user=r.DB_USER,
+                             passwd=r.DB_PASSWORD,
+                             db=r.DB_NAME
+                             )
+        cur = db.cursor()
+    
+        ShortestDistance = GetDatabaseShortestRoute()
+    
+        # Test if the new route is shorter than the current shortest route: if so, upload it
+        if ShortestDistance == None or RouteTime < ShortestDistance:
+            
+            RouteDescription_Long = PrintRouteInHTMLFormat(Route)
+            DateTime = CreateTimeStamp()
+            
+            InputRouteQuery = 'INSERT INTO ' + r.DB_TABLE_SHORTEST_ROUTE + '(' + r.SHORTROUTE_DISTANCE + ', ' + r.SHORTROUTE_DESC_LIST + ', ' + r.SHORTROUTE_DESC_LONG + ', ' + r.SHORTROUTE_DATETIME + ') VALUES (' + str(RouteTime) + ', "' + str(Route) + '", "' + RouteDescription_Long + '", "' + str(DateTime) + '");'
+            cur.execute (InputRouteQuery)
                         
-                      'ELEPHANT & CASTLE', 'BOROUGH', 'LONDON BRIDGE', 'BANK', 'MOORGATE', 'LIVERPOOL STREET', 'ALDGATE EAST', 'WHITECHAPEL', 'STEPNEY GREEN', 'MILE END', 'BOW ROAD',
-                      'BROMLEY BY BOW', 'WEST HAM', 'PLAISTOW', 'UPTON PARK', 'EAST HAM', 'BARKING', 'UPNEY', 'BECONTREE', 'DAGENHAM HEATHWAY', 'DAGENHAM EAST', 'ELM PARK', 'HORNCHURCH', 
-                        
-                      'UPMINSTER BRIDGE', 'UPMINSTER', 'UPMINSTER', 'UPMINSTER BRIDGE', 'HORNCHURCH', 'ELM PARK', 'DAGENHAM EAST', 'DAGENHAM HEATHWAY', 'BECONTREE', 'UPNEY', 'BARKING',
-                      'EAST HAM', 'UPTON PARK', 'PLAISTOW', 'WEST HAM', 'CANNING TOWN', 'NORTH GREENWICH', 'CANARY WHARF', 'CANADA WATER', 'BERMONDSEY', 'LONDON BRIDGE', 'SOUTHWARK', 
-                         
-                      'WATERLOO', 'WESTMINSTER', 'EMBANKMENT', 'TEMPLE', 'BLACKFRIARS', 'MANSION HOUSE', 'CANNON STREET', 'MONUMENT', 'TOWER HILL', 'ALDGATE', 'ALDGATE', 'LIVERPOOL STREET', 
-                      'BETHNAL GREEN', 'BETHNAL GREEN', 'LIVERPOOL STREET', 'MOORGATE', 'BARBICAN', 'FARRINGDON', 'KINGS CROSS ST PANCRAS', 'EUSTON SQUARE', 'GREAT PORTLAND STREET', 
-                      
-                      'BAKER STREET ', 'EDGWARE ROAD', 'MARYLEBONE', 'BAKER STREET', 'REGENTS PARK', 'OXFORD CIRCUS', 'PICCADILLY CIRCUS', 'CHARING CROSS', 'LEICESTER SQUARE', 
-                      'TOTTENHAM COURT ROAD', 'GOODGE STREET', 'WARREN STREET', 'EUSTON', 'MORNINGTON CRESCENT', 'CAMDEN TOWN', 'CHALK FARM', 'BELSIZE PARK', 'HAMPSTEAD', 'GOLDERS GREEN', 
-                      
-                      'BRENT CROSS', 'HENDON CENTRAL', 'COLINDALE', 'BURNT OAK', 'EDGWARE', 'CANONS PARK', 'STANMORE', 'STANMORE', 'CANONS PARK', 'QUEENSBURY', 'KINGSBURY', 'WEMBLEY PARK', 
-                      'NEASDEN', 'DOLLIS HILL', 'WILLESDEN GREEN', 'KILBURN', 'WEST HAMPSTEAD', 'FINCHLEY ROAD', 'SWISS COTTAGE', 'ST JOHNS WOOD', 'ST JOHNS WOOD', 'BAKER STREET', 'BOND STREET', 
-                      
-                      'MARBLE ARCH', 'LANCASTER GATE', 'QUEENSWAY', 'QUEENSWAY', 'LANCASTER GATE', 'MARBLE ARCH', 'BOND STREET', 'GREEN PARK', 'VICTORIA', 'PIMLICO', 'VAUXHALL', 'STOCKWELL', 
-                      'BRIXTON', 'BRIXTON', 'STOCKWELL', 'OVAL', 'KENNINGTON', 'ELEPHANT & CASTLE', 'LAMBETH NORTH', 'LAMBETH NORTH', 'WATERLOO', 'WESTMINSTER', 'ST JAMES PARK', 'ST JAMES PARK', 
-                      
-                      'VICTORIA', 'GREEN PARK', 'HYDE PARK CORNER', 'KNIGHTSBRIDGE', 'SOUTH KENSINGTON', 'SLOANE SQUARE', 'SLOANE SQUARE', 'VICTORIA', 'GREEN PARK', 'PICCADILLY CIRCUS', 
-                      'LEICESTER SQUARE', 'COVENT GARDEN', 'HOLBORN', 'RUSSELL SQUARE', 'RUSSELL SQUARE', 'KINGS CROSS ST PANCRAS', 'HIGHBURY', 'FINSBURY PARK', 'SEVEN SISTERS', 'TOTTENHAM HALE', 
-                      
-                      'BLACKHORSE ROAD', 'WALTHAMSTOW', 'LEYTONSTONE', 'WANSTEAD', 'REDBRIDGE', 'GANTS HILL', 'NEWBURY PARK', 'BARKINGSIDE', 'FAIRLOP', 'HAINAULT', 'GRANGE HILL', 'CHIGWELL', 
-                      'RODING VALLEY', 'WOODFORD', 'SOUTH WOODFORD', 'SNARESBROOK', 'SNARESBROOK', 'SOUTH WOODFORD', 'WOODFORD', 'BUCKHURST HILL', 'LOUGHTON', 'DEBDEN', 'THEYDON BOIS', 'EPPING', 
-                      
-                      'EPPING', 'THEYDON BOIS', 'DEBDEN', 'LOUGHTON', 'BUCKHURST HILL', 'WOODFORD', 'SOUTH WOODFORD', 'SNARESBROOK', 'LEYTONSTONE', 'LEYTON', 'STRATFORD', 'MILE END', 
-                      'BETHNAL GREEN', 'LIVERPOOL STREET', 'MOORGATE', 'OLD STREET', 'ANGEL', 'ANGEL', 'KINGS CROSS ST PANCRAS', 'RUSSELL SQUARE', 'HOLBORN', 'CHANCERY LANE', 'ST PAULS', 
-                      
-                      'ST PAULS', 'CHANCERY LANE', 'HOLBORN', 'RUSSELL SQUARE', 'KINGS CROSS ST PANCRAS', 'CALEDONIAN ROAD', 'HOLLOWAY ROAD', 'ARSENAL', 'ARSENAL', 'FINSBURY PARK', 'MANOR HOUSE', 
-                      'TURNPIKE LANE', 'WOOD GREEN', 'BOUNDS GREEN', 'ARNOS GROVE', 'SOUTHGATE', 'OAKWOOD', 'COCKFOSTERS', 'HIGH BARNET', 'TOTTERIDGE & WHETSTONE', 'WOODSIDE PARK', 'WEST FINCHLEY', 
-                      
-                      'FINCHLEY CENTRAL', 'MILL HILL EAST', 'MILL HILL EAST', 'FINCHLEY CENTRAL', 'EAST FINCHLEY', 'HIGHGATE', 'ARCHWAY', 'TUFNELL PARK', 'KENTISH TOWN', 'KENTISH TOWN', 
-                      'CAMDEN TOWN', 'MORNINGTON CRESCENT', 'EUSTON', 'WARREN STREET', 'OXFORD CIRCUS', 'BOND STREET', 'BAKER STREET', 'MARYLEBONE', 'EDGWARE ROAD', 'PADDINGTON', 'WARWICK AVENUE', 
-                      
-                      'MAIDA VALE', 'KILBURN PARK', 'QUEENS PARK', 'KENSAL GREEN', 'WILLESDEN JUNCTION', 'HARLESDEN', 'STONEBRIDGE PARK', 'WEMBLEY CENTRAL', 'NORTH WEMBLEY', 'SOUTH KENTON', 
-                      'KENTON', 'HARROW & WEALDSTONE', 'HARROW & WEALDSTONE', 'KENTON', 'NORTHWICK PARK', 'PRESTON ROAD', 'PRESTON ROAD', 'NORTHWICK PARK', 'HARROW-ON-THE-HILL', 'WEST HARROW', 
-                      
-                      'RAYNERS LANE', 'EASTCOTE', 'RUISLIP MANOR', 'RUISLIP', 'ICKENHAM', 'HILLINGDON', 'UXBRIDGE', 'UXBRIDGE', 'HILLINGDON', 'ICKENHAM', 'WEST RUISLIP', 'RUISLIP GARDENS', 
-                      'SOUTH RUISLIP', 'NORTHOLT', 'GREENFORD', 'PERIVALE', 'HANGER LANE', 'NORTH ACTON', 'EAST ACTON', 'WHITE CITY', 'SHEPHERDS BUSH', 'HOLLAND PARK', 'HOLLAND PARK', 
-                      
-                      'SHEPHERDS BUSH', 'KENSINGTON (OLYMPIA)', 'KENSINGTON (OLYMPIA)', 'EARLS COURT', 'WEST KENSINGTON', 'BARONS COURT', 'BARONS COURT', 'HAMMERSMITH', 'ACTON TOWN', 
-                      'EALING COMMON', 'EALING BROADWAY', 'WEST ACTON', 'NORTH EALING', 'PARK ROYAL', 'ALPERTON', 'SUDBURY TOWN', 'SUDBURY HILL', 'SOUTH HARROW', 'SOUTH HARROW', 
-                      
-                      'RAYNERS LANE', 'WEST HARROW', 'HARROW-ON-THE-HILL', 'NORTH HARROW', 'PINNER', 'NORTHWOOD HILLS', 'NORTHWOOD', 'MOOR PARK', 'CROXLEY', 'WATFORD', 'WATFORD', 'CROXLEY', 
-                      'MOOR PARK', 'RICKMANSWORTH', 'CHORLEYWOOD', 'CHALFONT & LATIMER', 'AMERSHAM', 'AMERSHAM', 'CHALFONT & LATIMER', 'CHESHAM']
+            db.commit()
+            
+    except Exception, e:
+
+        logging.error('%s: Unable to populate database with shortest route', FN_NAME)
+        logging.error('%s: ShortestDistance: %s' %(FN_NAME,ShortestDistance))
+        logging.error('%s: RouteTime: %s' %(FN_NAME,RouteTime))
+        logging.error('%s: Query:\n%s' % (FN_NAME,InputRouteQuery))
+        logging.exception('Traceback message: \n%s',e)
+        
+    else:
+        logging.debug('%s: Database populated with shortest route without error', FN_NAME)
+    
+    finally:        
+        db.close()
 
 def FindCommonLine(CurrentStation, NextStation):
     ''' Finds a tube line that contains both the stations passed '''
@@ -75,7 +157,7 @@ def FindCommonLine(CurrentStation, NextStation):
         if CurrentStation in r.LINES_AND_STATIONS[Line]:
             if NextStation in r.LINES_AND_STATIONS[Line]:
                 return Line
-        
+  
     return "(No Line Found)"
 
 def ParseRouteList(Route):
@@ -91,41 +173,60 @@ def ParseRouteList(Route):
     
     return Output
 
-def PrintRouteInReadableFormat(InputRoute):
+def PrintRouteInHTMLFormat(InputRoute):
     ''' Outputs the route to the console in the form of readable user directions '''
     
-    Route = ParseRouteList(InputRoute)
+    FN_NAME = "PrintRouteInHTMLFormat"
     
-    ChangeStation = Route[0]
-    CurrentLine = 'Piccadilly'
+    Output = ""
     
-    StationsEnRoute = []
-    
-    print "Start at " + ChangeStation
-    
-    for i in range(1,len(Route) - 1):u
+    try:
+        # Tidy the route to remove any duplicates
+        Route = ParseRouteList(InputRoute)
         
-        # If the next station is on a different line, find a line that joins them
-        if not Route[i] in r.LINES_AND_STATIONS[CurrentLine]:
-            CurrentLine = FindCommonLine(Route[i-1], Route[i])
-        
-        # Pass over any intermediary stations unless they are at the end of the line
-        if Route[i+1] in r.LINES_AND_STATIONS[CurrentLine] and not Route[i] in r.NODES_SINGLE:
-            StationsEnRoute.append(Route[i])
-        
-        # Otherwise, output to the console
-        else:
+        ChangeStation = Route[0]
+        CurrentLine = 'Piccadilly' # Included as default, if the first station is on a different line the first step below will catch it
     
-            if StationsEnRoute == []:                    
-                print "Go to " + Route[i] + " on the " + CurrentLine.upper() + " Line"
-                
-            else:
-                print "Go to " + Route[i] + " on the " + CurrentLine.upper() + " Line via " + str(StationsEnRoute)
+        StationsEnRoute = []
+        
+        Output = Output + "Start at " + ChangeStation + "[br/]" # Square brackets to accomodate the 'Allow PHP in Posts and Pages' Wordpress plugin
+        
+        for i in range(1,len(Route) - 1):
             
-            StationsEnRoute = [] # Clear the en route stations for the next iteration
-
-    print "Finish at " + Route[-1]
+            # If the next station is on a different line, find a line that joins them
+            if not Route[i] in r.LINES_AND_STATIONS[CurrentLine]:
+                CurrentLine = FindCommonLine(Route[i-1], Route[i])
+            
+            # Pass over any intermediary stations unless they are at the end of the line
+            if Route[i+1] in r.LINES_AND_STATIONS[CurrentLine] and not Route[i] in r.NODES_SINGLE:
+                StationsEnRoute.append(Route[i])
+            
+            # Otherwise, output to the console
+            else:
+        
+                if StationsEnRoute == []:                    
+                    Output = Output + "Go to " + Route[i] + " on the " + CurrentLine.upper() + " line" + "[br/]" 
+                    
+                else:
+                    Output = Output + "Go to " + Route[i] + " on the " + CurrentLine.upper() + " line via " + str(StationsEnRoute) + "[br/]"
+                
+                StationsEnRoute = [] # Clear the en route stations for the next iteration
     
-#PrintRouteInReadableFormat(TestRoute)
-
-
+        Output = Output + "Finish at " + Route[-1]
+    
+    except Exception, e:
+        logging.error('%s: Unable to generate readable route description', FN_NAME)
+        logging.error('%s: InputRoute: \n%s' %(FN_NAME,InputRoute))
+        logging.error('%s: CurrentLine: %s' %(FN_NAME,CurrentLine))
+        logging.error('%s: StationsEnRoute: %s' %(FN_NAME,StationsEnRoute))
+        logging.error('%s: Output before error: \n%s' %(FN_NAME,Output))
+        logging.exception('Traceback message: \n%s',e)
+        
+        Output = "ERROR: Unable to generate readable route description, please check log for details"
+    
+    else:
+        logging.debug('%s: Readable route description created without error', FN_NAME)     
+    
+    finally:
+        return Output
+    
