@@ -1,4 +1,4 @@
 LondonUnderground
 ==============
 
-Contains files used for the #TwitterMetrics dynamic infographics project
+Contains files that generate random tube routes that visit every station on the London Underground.
