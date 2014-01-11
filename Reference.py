@@ -20,8 +20,8 @@ DEFAULT_STATION_WAIT = 0.333 # Assume 20 seconds wait at each station
 
 # Define the database access details
 DB_HOST = "localhost"
-DB_USER = "root"
-DB_PASSWORD = "123penelope"
+DB_USER = "username"
+DB_PASSWORD = "password"
 DB_NAME = "LondonUnderground"
 
 # Define the names of tables in the database
